@@ -12,12 +12,12 @@ import (
 
 type (
 	server struct {
-		host      string
-		endpoint  string
-		proxy     *httputil.ReverseProxy
-		isHealthy bool
-		client    *http.Client
-		mu        sync.Mutex
+		host                string
+		healthCheckEndpoint string
+		proxy               *httputil.ReverseProxy
+		isHealthy           bool
+		client              *http.Client
+		mu                  sync.Mutex
 	}
 )
 
@@ -38,11 +38,11 @@ func newServer(host string, endpoint string, requestTimeout time.Duration, clien
 	endpointUrl.Path = endpoint
 
 	var s = &server{
-		host:     host,
-		endpoint: endpointUrl.String(),
-		client:   client,
-		proxy:    httputil.NewSingleHostReverseProxy(u),
-		mu:       sync.Mutex{},
+		host:                host,
+		healthCheckEndpoint: endpointUrl.String(),
+		client:              client,
+		proxy:               httputil.NewSingleHostReverseProxy(u),
+		mu:                  sync.Mutex{},
 	}
 
 	s.proxy.Transport = &http.Transport{
@@ -52,13 +52,18 @@ func newServer(host string, endpoint string, requestTimeout time.Duration, clien
 		}).DialContext,
 	}
 
+	s.proxy.Director = func(req *http.Request) {
+		req.URL.Scheme = "http"
+		req.URL.Host = host
+	}
+
 	return s
 }
 
 func (s *server) healthCheck(t *time.Ticker) {
 	<-t.C
 
-	resp, err := s.client.Get(s.endpoint)
+	resp, err := s.client.Get(s.healthCheckEndpoint)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		log.Printf("server %s unhealthy", s.host)
 		s.mu.Lock()
