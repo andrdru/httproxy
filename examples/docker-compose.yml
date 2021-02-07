@@ -1,0 +1,57 @@
+version: '3'
+
+services:
+  balancer:
+    image: httproxy
+    environment:
+      PROXY_ADDRESS: ":8080"
+      PROXY_TIMEOUT: 5000
+      PROXY_HOSTS: "node1:1234;node2:5678;node3:7890"
+      PROXY_HEALTHCHECK: "/health"
+      PROXY_HEALTHCHECK_INTERVAL: 1000
+      PROXY_HEALTHCHECK_TIMEOUT: 500
+    ports:
+      - "8080:8080"
+    networks:
+      - code-network
+    depends_on:
+      - node1
+  pinger:
+    image: alpine
+    networks:
+      - code-network
+    command: /bin/sh -c "while :; do sleep 0.1 && wget -qO- -T 10 balancer:8080 && echo '' || echo 'error 500' ; done"
+    depends_on:
+      - balancer
+  node1:
+    image: golang:1.15-alpine
+    volumes:
+      - ./server.go:/server.go
+    environment:
+      SERVER_PORT: 1234
+    command: go run /server.go
+    networks:
+      - code-network
+  node2:
+    image: golang:1.15-alpine
+    volumes:
+      - ./server.go:/server.go
+    environment:
+      SERVER_PORT: 5678
+    command: go run /server.go
+    networks:
+      - code-network
+  node3:
+    image: golang:1.15-alpine
+    volumes:
+      - ./server.go:/server.go
+    environment:
+      SERVER_PORT: 7890
+      BROKEN: "Y"
+    command: go run /server.go
+    networks:
+      - code-network
+
+networks:
+  code-network:
+    driver: bridge

@@ -17,6 +17,7 @@ type (
 		address             string
 		hosts               string
 		endpoint            string
+		timeout             int64
 		healthCheckInterval int64
 		healthCheckTimeout  int64
 		balance             string
@@ -27,6 +28,7 @@ type (
 		endpoint            string
 		healthCheckInterval time.Duration
 		healthCheckTimeout  time.Duration
+		timeout             time.Duration
 		balance             balance
 	}
 )
@@ -55,15 +57,16 @@ func main() {
 	var httpClient = &http.Client{Timeout: conf.healthCheckTimeout}
 
 	for _, host := range conf.hosts {
-		s := newServer(host, conf.endpoint, httpClient)
+		s := newServer(host, conf.endpoint, conf.timeout, httpClient)
+		s.proxy.ErrorHandler = ProxyErrorHandler
 
-		go func() {
-			var t = time.NewTicker(conf.healthCheckInterval)
+		go func(s *server, interval time.Duration) {
+			var t = time.NewTicker(interval)
 			for {
 				s.healthCheck(t)
-				t.Reset(conf.healthCheckInterval)
+				t.Reset(interval)
 			}
-		}()
+		}(s, conf.healthCheckInterval)
 
 		servers = append(servers, s)
 	}
@@ -86,6 +89,10 @@ func BalanceHandler(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	current.proxy.ServeHTTP(writer, request)
+}
+
+func ProxyErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
+	BalanceHandler(w, r)
 }
 
 func chooseServer() (current *server) {
@@ -129,7 +136,8 @@ func parseFlags() flags {
 	)
 
 	flag.Int64Var(&f.healthCheckInterval, "interval", 1000, "time in ms, repeat interval")
-	flag.Int64Var(&f.healthCheckTimeout, "timeout", 500, "time in ms, health check timeout")
+	flag.Int64Var(&f.healthCheckTimeout, "health_timeout", 500, "time in ms, health check timeout")
+	flag.Int64Var(&f.timeout, "timeout", 5000, "time in ms, health check timeout")
 
 	flag.StringVar(
 		&f.balance,
@@ -161,6 +169,7 @@ func initConfig(f flags) config {
 		balance:             balance(f.balance),
 		healthCheckTimeout:  time.Duration(f.healthCheckTimeout) * time.Millisecond,
 		healthCheckInterval: time.Duration(f.healthCheckInterval) * time.Millisecond,
+		timeout:             time.Duration(f.timeout) * time.Millisecond,
 	}
 
 	c.hosts = strings.Split(strings.Trim(f.hosts, "; "), ";")
@@ -186,6 +195,10 @@ func (c *config) validate() error {
 
 	if c.healthCheckTimeout == 0 {
 		return errors.New("health check timeout could not be 0")
+	}
+
+	if c.timeout == 0 {
+		return errors.New("proxy timeout could not be 0")
 	}
 
 	return nil

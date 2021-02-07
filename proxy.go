@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -26,7 +27,7 @@ var (
 	serverIndexMutex = sync.Mutex{}
 )
 
-func newServer(host string, endpoint string, client *http.Client) *server {
+func newServer(host string, endpoint string, requestTimeout time.Duration, client *http.Client) *server {
 	var u = &url.URL{
 		Scheme: "http",
 		Host:   host,
@@ -36,13 +37,22 @@ func newServer(host string, endpoint string, client *http.Client) *server {
 
 	endpointUrl.Path = endpoint
 
-	return &server{
+	var s = &server{
 		host:     host,
 		endpoint: endpointUrl.String(),
 		client:   client,
 		proxy:    httputil.NewSingleHostReverseProxy(u),
 		mu:       sync.Mutex{},
 	}
+
+	s.proxy.Transport = &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   requestTimeout,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+	}
+
+	return s
 }
 
 func (s *server) healthCheck(t *time.Ticker) {
