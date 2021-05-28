@@ -2,7 +2,9 @@ version: '3'
 
 services:
   balancer:
-    image: httproxy
+    build:
+      context: .
+      dockerfile: ../Dockerfile
     environment:
       PROXY_ADDRESS: ":8080"
       PROXY_TIMEOUT: 5000
@@ -20,7 +22,7 @@ services:
     image: alpine
     networks:
       - code-network
-    command: /bin/sh -c "while :; do sleep 0.1 && wget -qO- -T 10 balancer:8080 && echo '' || echo 'error 500' ; done"
+    command: /bin/sh -c "while :; do sleep 0.5 && wget -qO- -T 10 balancer:8080 && echo '' || echo 'error 500' ; done"
     depends_on:
       - balancer
   node1:

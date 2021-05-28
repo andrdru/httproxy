@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"time"
 )
@@ -46,9 +48,20 @@ var (
 )
 
 func main() {
-	var f = parseFlags()
+	var (
+		f           = parseFlags()
+		conf        = initConfig(f)
+		c           = make(chan os.Signal, 1)
+		ctx, cancel = context.WithCancel(context.Background())
+	)
 
-	var conf = initConfig(f)
+	signal.Notify(c, os.Interrupt)
+
+	go func() {
+		var oscall = <-c
+		log.Printf("system call: %+v", oscall)
+		cancel()
+	}()
 
 	if err := conf.validate(); err != nil {
 		log.Fatal(err)
@@ -60,20 +73,55 @@ func main() {
 		s := newServer(host, conf.endpoint, conf.timeout, httpClient)
 		s.proxy.ErrorHandler = ProxyErrorHandler
 
-		go func(s *server, interval time.Duration) {
+		go func(ctx context.Context, s *server, interval time.Duration) {
 			var t = time.NewTicker(interval)
 			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
 				s.healthCheck(t)
 				t.Reset(interval)
 			}
-		}(s, conf.healthCheckInterval)
+		}(ctx, s, conf.healthCheckInterval)
 
 		servers = append(servers, s)
 	}
 
-	http.HandleFunc("/", BalanceHandler)
-	log.Fatal(http.ListenAndServe(f.address, nil))
+	var mux = http.NewServeMux()
+	mux.Handle("/", http.HandlerFunc(BalanceHandler))
 
+	var srv = &http.Server{
+		Addr:    f.address,
+		Handler: mux,
+	}
+
+	var err error
+	go func() {
+		if err = srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %s\n", err)
+		}
+	}()
+
+	log.Printf("started")
+
+	<-ctx.Done()
+
+	log.Printf("stopping")
+
+	var ctxCancel context.Context
+	ctxCancel, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	defer func() {
+		cancel()
+	}()
+
+	if err = srv.Shutdown(ctxCancel); err != nil {
+		log.Fatalf("stop failed: %s", err)
+	}
+
+	log.Printf("stopped")
 }
 
 func BalanceHandler(writer http.ResponseWriter, request *http.Request) {
